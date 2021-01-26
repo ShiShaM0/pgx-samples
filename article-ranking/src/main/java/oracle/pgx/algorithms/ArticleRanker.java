@@ -37,98 +37,35 @@ import static oracle.pgx.algorithms.Utils.writeln;
 import static oracle.pgx.algorithms.Utils.writer;
 
 public class ArticleRanker {
-  public static Logger logger = LoggerFactory.getLogger(ArticleRanker.class);
-  public static final double TOLERANCE = 0.001;
-  public static final double DAMPING = 0.85;
-  public static final int MAX_ITER_COUNT = 1000;
+  String szOPVFile = "../../data/connections.opv";
+  String szOPEFile = "../../data/connections.ope";
+  OraclePropertyGraph opg = OraclePropertyGraph.getInstance( args, szGraphName);
+  opgdl = OraclePropertyGraphDataLoader.getInstance();
+  opgdl.loadData(opg, szOPVFile, szOPEFile, 48 /* DOP */, 1000 /* batch size */, true /* rebuild index flag */, "pddl=t,pdml=t" /* options */);
 
-  public static void main(String[] args) throws Exception {
-    Path inputDir = Paths.get(args[0]);
+  String statement =
+          "CREATE PROPERTY GRAPH hr_simplified "
+                  + "  VERTEX TABLES ( "
+                  + "    hr.employees LABEL employee "
+                  + "      PROPERTIES ARE ALL COLUMNS EXCEPT ( job_id, manager_id, department_id ), "
+                  + "    hr.departments LABEL department "
+                  + "      PROPERTIES ( department_id, department_name ) "
+                  + "  ) "
+                  + "  EDGE TABLES ( "
+                  + "    hr.employees AS works_at "
+                  + "      SOURCE KEY ( employee_id ) REFERENCES employees "
+                  + "      DESTINATION departments "
+                  + "      PROPERTIES ( employee_id ) "
+                  + "  )";
+  session.executePgql(statement);
+  PgxGraph g = session.getGraph("HR_SIMPLIFIED");
+  /**
+   * Alternatively, one can use the prepared statement API, for example:
+   */
 
-    if (!Files.exists(inputDir)) {
-      throw new IllegalArgumentException("The input directory '" + inputDir + "' does not exist.");
-    }
+  PgxPreparedStatement stmnt = session.preparePgql(statement);
+  stmnt.execute();
+  stmnt.close();
+  PgxGraph g = session.getGraph("HR_SIMPLIFIED");
 
-    try (PgxSession session = Pgx.createSession("pgx-algorithm-session")) {
-      String code = getResource("algorithms/ArticleRank.java");
-      CompiledProgram program = session.compileProgram(code);
-      logger.info("Compiled program {}", program);
-
-      GraphConfig config = createGraphConfig(inputDir);
-      PgxGraph graph = session.readGraphWithProperties(config);
-      logger.info("Loaded graph {}", graph);
-
-      VertexProperty<Object, Object> rank = graph.createVertexProperty(PropertyType.DOUBLE);
-      program.run(graph, TOLERANCE, DAMPING, MAX_ITER_COUNT, rank);
-
-      for (PgxVertex<Object> vertex : limit(graph.getVertices(), 10)) {
-        System.out.println("ArticleRank " + vertex + " = " + rank.get(vertex));
-      }
-    }
-  }
-
-  private static FileGraphConfig createGraphConfig(Path inputDir) {
-    try {
-      Path tempDir = Files.createTempDirectory("pgx-sample-algorithm-articlerank");
-      logger.info("Using temporary directory {}", tempDir);
-
-      String articlesUri = createArticles(inputDir, tempDir);
-      String citationsUri = createCitations(inputDir, tempDir);
-
-      return GraphConfigBuilder
-          .forFileFormat(Format.CSV)
-          .addVertexUri(articlesUri)
-          .addEdgeUri(citationsUri)
-          .build();
-    } catch (IOException e) {
-      throw new RuntimeException("Cannot create a temporary directory.", e);
-    }
-  }
-
-  private static String createArticles(Path inputDir, Path tempDir) {
-    Path path = inputDir.resolve("web-Google.txt");
-    Path output = createOutputFile(tempDir.resolve("articles.csv"));
-
-    try {
-      Set<Integer> seen = new HashSet<>();
-
-      try (Writer writer = writer(output); Stream<String> lines = lines(path).skip(4)) {
-        lines.map(Splitter.tab).forEach(columns -> {
-          int source = Integer.parseInt(columns[0]);
-          int target = Integer.parseInt(columns[1]);
-
-          writeArticle(seen, writer, source);
-          writeArticle(seen, writer, target);
-        });
-      }
-
-      return output.toString();
-    } catch (IOException e) {
-      throw new RuntimeException("Unable to read the articles.", e);
-    }
-  }
-
-  private static void writeArticle(Set<Integer> seen, Writer writer, int article) {
-    if (seen.contains(article)) {
-      return;
-    }
-
-    writeln(writer, String.valueOf(article));
-    seen.add(article);
-  }
-
-  private static String createCitations(Path inputDir, Path tempDir) {
-    Path input = inputDir.resolve("web-Google.txt");
-    Path output = createOutputFile(tempDir.resolve("citations.csv"));
-
-    try (Writer writer = writer(output); Stream<String> lines = lines(input).skip(4)) {
-      lines.map(Splitter.tab).forEach(columns -> {
-        writeln(writer, columns[0] + "," + columns[1]);
-      });
-
-      return output.toString();
-    } catch (IOException e) {
-      throw new RuntimeException("Unable to read the citations.", e);
-    }
-  }
 }
